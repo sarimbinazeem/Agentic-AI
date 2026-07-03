@@ -3,7 +3,7 @@ import sys
 from openai import OpenAI
 from dotenv import load_dotenv
 
-sys.stdout.reconfigure(encoding ="utf-8")
+sys.stdout.reconfigure(encoding="utf-8")
 load_dotenv()
 
 client = OpenAI(
@@ -11,41 +11,43 @@ client = OpenAI(
     base_url=os.getenv("DO_BASE_URL"),
 )
 
+persona = "Your a rapper that raps in coding genre only."  # change this!
 history = [
-        {
-            "role": "system",
-            "content": "You are a helpful assistant."
-        }
+    {
+        "role": "system", 
+        "content": persona
+    }
 ]
- 
- 
-def chat(history:list) -> None:
-    while True:
-        prompt = input("What do you want to ask today: ")
 
+print(f"Persona: {persona}\nType 'quit' to exit.\n")
+
+def chat(history:list)-> None:
+    while True:
+        prompt = input("What Do You Want To Ask Today?")
+        
         if prompt.lower().strip() == "quit":
             break
-
+        
         if prompt.strip() == "":
             continue
         
         history.append(
-                       {
-                           "role":"user",
-                           "content":prompt
-                       })
+            {
+                "role":"user",
+                "content":prompt,
+            }      
+        )
         
         response = client.chat.completions.create(
             model = os.getenv("MODEL"),
             
-            messages=history,
-            stream = True,
+            messages= history,
             
+            stream=True
         )
         
-        #since the response is on chunks so we apply loop to obtain response in a variable
-        assistant_message = ""
-    
+        assistant_message=""
+        
         for chunk in response:
             if not chunk.choices:
                 continue
@@ -55,25 +57,15 @@ def chat(history:list) -> None:
             
             assistant_message += delta
             
-        #to get in next line
         print("\n")
         
         history.append(
             {
                 "role":"assistant",
-                "content": assistant_message,
+                "content":assistant_message,
             }
         )
-        
-        
             
-    
-print("Type 'quit' to exit.\n")
-    
+
 chat(history)
     
-
-
-
-
-

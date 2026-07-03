@@ -31,4 +31,4 @@ for prompt in questions:
     print("Tokens Used: ",response.usage.prompt_tokens) #Tokens it take from user to AI
     print("Completion Tokens: ",response.usage.completion_tokens) #Tokens it take from AI to user
     
-    
+    print("\n")

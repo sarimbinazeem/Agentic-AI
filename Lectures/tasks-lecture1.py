@@ -378,7 +378,27 @@ def task8():
         "Explain what Python is in 2 sentences.",
         "Write a detailed explanation of how the internet works, including DNS, TCP/IP, HTTP, and servers.",
     ]
-    # YOUR CODE HERE
+   
+    for prompt in questions:
+        
+        response = client.chat.completions.create(
+            model=os.getenv("MODEL"),
+            messages=[
+                {
+                    "role":"user",
+                    "content":prompt,
+                }
+            ],
+        )
+        
+        print("Question: ",prompt)
+        print("Response: ",response.choices[0].message.content)
+        
+        print("Prompt Tokens: ",response.usage.prompt_tokens) #Tokens it take from user to AI
+        print("Completion Tokens: ",response.usage.completion_tokens) #Tokens it take from AI to user
+        
+        print("\n")
+        
 
 
 

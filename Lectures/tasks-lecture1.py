@@ -107,43 +107,41 @@ def task3():
         {"role": "system", "content": "You are a helpful assistant."}
     ]
 
-    def chat(history:list) -> str:
-        while True:
-            prompt = input("What do you want to ask today: ")
+    while True:
+        prompt = input("What do you want to ask today: ")
 
-            #if the user enters quit we break the loop 
-            if prompt.lower().strip() == "quit":
-                break
+        #if the user enters quit we break the loop 
+        if prompt.lower().strip() == "quit":
+            break
             
-            #if the user accidently enters a blank space we ignore and continue
-            if prompt.strip() == "":
-                continue
+        #if the user accidently enters a blank space we ignore and continue
+        if prompt.strip() == "":
+            continue
             
-            history.append(
-                        {
-                            "role":"user",
-                            "content":prompt
-                        })
+        history.append(
+                    {
+                        "role":"user",
+                        "content":prompt
+                    })
             
-            response = client.chat.completions.create(
-                model = os.getenv("MODEL"),
+        response = client.chat.completions.create(
+            model = os.getenv("MODEL"),
                 
-                messages=history,
+            messages=history,
                 
-            )
+        )
             
-            assistant_message = response.choices[0].message
+        assistant_message = response.choices[0].message
             
-            history.append(
-                {
-                    "role":"assistant",
-                    "content": assistant_message.content,
-                }
-            )
-            
-            print(assistant_message.content)  
+        history.append(
+            {
+                "role":"assistant",
+                "content": assistant_message.content,
+            }
+        )
         
-    chat(history)
+        print(assistant_message.content)  
+        
 
 
 

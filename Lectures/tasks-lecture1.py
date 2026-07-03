@@ -338,7 +338,27 @@ def task7():
     print("=== TASK 7: Temperature Experiment ===")
     prompt = "Write a one-sentence motivational quote."
     temperatures = [0.0, 0.7, 1.5]
-    # YOUR CODE HERE
+    
+    for temp in temperatures:
+        
+        print(f"\n====Temperature {temp}====")
+        response = client.chat.completions.create(
+            model = os.getenv("MODEL"),
+            
+            messages=[
+                {
+                    "role":"user",
+                    "content":prompt,
+                }
+            ],
+            
+            temperature= temp,
+        )
+
+        print(response.choices[0].message.content)
+        print("\n")
+
+
 
 
 

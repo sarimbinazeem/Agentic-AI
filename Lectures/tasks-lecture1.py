@@ -406,9 +406,9 @@ def task8():
 # Run one task at a time — comment/uncomment as needed
 # ===========================================================
 
-# task1()
+task1()
 # task2()
-task3()
+# task3()
 # task4()
 # task5()
 # task6()

@@ -222,7 +222,7 @@ def task4():
 
 def task5():
     print("=== TASK 5: Persona Bot ===")
-    persona = "You are a chef who only talks about food and cooking."  # change this!
+    persona = "Your a rapper that raps in coding genre only."  # change this!
     history = [{"role": "system", "content": persona}]
     print(f"Persona: {persona}\nType 'quit' to exit.\n")
     
@@ -413,4 +413,4 @@ task1()
 # task5()
 # task6()
 # task7()
-# task8()
+task8()

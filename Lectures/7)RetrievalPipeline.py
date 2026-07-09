@@ -19,10 +19,6 @@ query = "How long does a refund take to process"
 
 retriever = db.as_retriever(search_kwargs={"k":3}) #give top 3 similar chunks
 
-# retriever=db.as_retriever(
-#     search_type ="similarity_score_threshold",
-#     search_kwargs = {"k":3,"score_threshold":0.3}, #give simialr chunks who have simialirty level higher than 0.3
-# )
 
 
 docs = retriever.invoke(query)

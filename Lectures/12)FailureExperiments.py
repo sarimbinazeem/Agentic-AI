@@ -26,7 +26,7 @@ db = Chroma(
 
 def call_llm(prompt):
     
-    history=[
+    message=[
         {
             "role": "system",
             "content": "You are a careful assistant. Answer only from the provided context."
@@ -39,7 +39,7 @@ def call_llm(prompt):
     
     response=client.chat.completions.create(
         model=os.getenv("MODEL"),
-        messages=history,
+        messages=message,
         
     )
     
@@ -56,28 +56,28 @@ def run_query(query,top_k,style="normal"):
     
     if style == "weak":
         prompt = f"""
-                Context:
-                {context}
+ Context:
+{context}
 
-                Question:
-                {query}
+Question:
+{query}
 
-                Answer:
+Answer:
                 """
                 
     else:
         prompt = f"""
-        Use ONLY the context below.
+Use ONLY the context below.
 
-        If the answer cannot be found, reply exactly:
+If the answer cannot be found, reply exactly:
 
-        "I don't have enough information in the provided documents."
+"I don't have enough information in the provided documents."
 
-        Context:
-        {context}
+Context:
+{context}
 
-        Question:
-        {query}
+Question:
+{query}
         """
         
     print(f"\nQuery: {query}")
@@ -110,11 +110,11 @@ print("\n===== Experiment 3 : Weak vs Strong Prompt =====")
 run_query(
     "Can alumni borrow books from the library?",
     top_k=2,
-    prompt_style="weak"
+    style="weak"
 )
 
 run_query(
     "Can alumni borrow books from the library?",
     top_k=2,
-    prompt_style="strong"
+    style="strong"
 )

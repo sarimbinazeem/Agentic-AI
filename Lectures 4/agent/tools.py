@@ -133,8 +133,36 @@ def edit_file(path:str,old_string:str,new_string:str,replace_all: bool=False) ->
     except Exception as e:
         return f"[error] {type(e).__name__}: {e}"
 
-
-             
+def list_dir(path:str =".") ->str:
+    """It Lists content of the directory"""
+    
+    try:
+        full = os.path.abspath(path)
+        entries = sorted(os.listdir(full)) #listdir() returns name of the files
+        if not entries:
+            return "Empty Directory."
+        
+        return "\n".join(entries)
+    
+    except Exception as e:
+        return f"[error] {type(e).__name__}: {e}"
+    
+#glob function that find all the files that matches the glob pattern
+def glob(pattern:str,path:str)->str:
+    try:
+        root = Path(path).resolve()
+        matches = sorted(root.glob(pattern))
+        
+        if not matches:
+            return f"(no files match pattern: {pattern})"
+        
+        #else we show the relative paths for the file 
+        relative = [ str(m.relative_to(root)) if m.is_relative_to(root) else str(m) for m in matches]
+        
+        return "\n".join(relative)
+    
+    except Exception as e:
+        return f"[error] {type(e).__name__}: {e}"
 #Tool Registry
 
 _TOOLS: list[dict] = [

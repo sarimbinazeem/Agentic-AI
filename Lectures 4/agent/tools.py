@@ -19,6 +19,14 @@ _READ_CAP_CHARS = 4000
 # Max chars accepted by write_file in one call.
 _WRITE_CAP_CHARS = 50000
 
+# Cap on grep output to keep context small.
+_GREP_MAX_RESULTS = 50
+_GREP_MAX_LINE_CHARS = 200
+
+# Default + max timeout for bash commands (seconds).
+_BASH_DEFAULT_TIMEOUT = 30
+_BASH_MAX_TIMEOUT = 120
+
 #Read_File Tool
 def read_file(path:str) ->str:
     #read the file and return the content
@@ -163,6 +171,124 @@ def glob(pattern:str,path:str)->str:
     
     except Exception as e:
         return f"[error] {type(e).__name__}: {e}"
+
+#Grep gets where a function aexists in the file and how many times it is ccalled in a file faster than other function
+def grep(pattern:str,path:str=".",include:str=""):
+    """
+    Pattern -> what to find
+    path -> where to find ("." means full project)
+    include -> inlucde only a particular extension file
+    """
+    
+    #create regex object for the pattern if valid
+    try:
+        regex = re.compile(pattern)
+    except re.error as e:
+        return f"[error] Invalid regex: {e}"
+    
+    root = Path(path) #this creates a folder type structure
+    if not root.exists():
+        return f"[error] Path not found: {path}"
+    
+    #typecasting results list array
+    results : list[str] = []
+    file_searched = 0
+    
+    #if we pass a file in grep
+    if root.is_file():
+        files = [root] #we extract the file part of root
+        
+    else:
+        #if we have included a file type
+        if include:
+            files = list(root.rglob(include)) #it is recursive glob
+            
+        else:
+            #if we dont include any file type we go through whole project folder
+            #skip the junk
+            skip_dirs = {".git", ".venv", "__pycache__", "node_modules"}
+            
+            #we put in file list if the path files doesnt match with skip directory list
+            files = [
+                p for p in root.glob("*")
+                if p.is_file() and not any(part in skip_dirs for part in p.parts)
+            ]
+            
+            #Now we return the results 
+            for fpath in files:
+                if not fpath.is_file():
+                    continue
+                    
+                file_searched +=1
+                
+                try: 
+                    text = fpath.read_text(encoding="utf-8",errors="replace")
+                except Exception:
+                    continue
+                
+                for lineNumber, line in enumerate(text.splitlines(),start=1):
+                    #if we find the regex in line
+                    if regex.search(line):
+                        snippet = line.strip()
+                if len(snippet) > _GREP_MAX_LINE_CHARS:
+                    snippet = snippet[:_GREP_MAX_LINE_CHARS] + "..."
+                
+                results.append(f"{fpath}:{lineNumber}:{snippet}")
+                
+                #if result length exceeded just return it
+                if len(results) >= _GREP_MAX_RESULTS:
+                    return (
+                        "\n".join(results)
+                        + f"\n... [truncated, {_GREP_MAX_RESULTS}+ matches; "
+                          f"refine pattern to narrow]"
+                    )
+                    
+    if not results:
+        return f"(no matches for pattern: {pattern!r} across {file_searched} files)"
+    
+    return "\n".join(results)
+
+def bash( command:str, timeout: int = _BASH_DEFAULT_TIMEOUT, prompt_fn: Callable[[str],str] |None = None, always_allow: set[str] | None = None,) -> str:
+    """
+    prompt_fn is for input
+    always_allow are the commands tht the user allowed permanently
+    
+    """
+    
+    #through cls we will know what is block warn or allow
+    cls = safety.classify(command)
+    
+    if cls.tier == "block":
+        #we use the function of safety.py
+        return safety.format_block_response(command,cls)
+    
+    if cls.tier == "warn":
+        #We check if it is pre approved or not
+        if always_allow not None and command in always_allow:
+            pass #do nothing
+        
+        else:
+            #if there is no prompt availble throw an error
+            if prompt_fn is None:
+                 return (
+                    f"[error] WARN command requires user approval but no "
+                    f"prompt_fn was provided. Command: {command[:80]}"
+                )
+                 
+            #use safety.py function to format prompt, response adng et final verdict
+            prompt = safety.format_prompt(command,cls)
+            response = prompt_fn(prompt)
+            verdict = safety.parse_permission_response(response)
+
+            if verdict == "deny":
+                return "[error] User denied permission for command."
+            if verdict == "always":
+                #add into allways allow list
+                always_allow.add(command)
+                
+    return execute_bash(command,timeout)
+                
+    
 #Tool Registry
 
 _TOOLS: list[dict] = [

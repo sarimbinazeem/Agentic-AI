@@ -9,6 +9,23 @@ parameters ->JSON Schema
 handler(**kwargs) -> bridge between LLM and Python . It contains the name of the tool
 
 """
+
+from __future__ import annotations
+
+import os
+import re
+import shutil
+import subprocess
+import sys
+import urllib.parse
+import urllib.request
+from pathlib import Path
+from typing import Callable
+
+from agent import safety
+
+
+
 # ─────────────────────────────────────────────────────────
 # Safety constants
 # ─────────────────────────────────────────────────────────
@@ -26,6 +43,18 @@ _GREP_MAX_LINE_CHARS = 200
 # Default + max timeout for bash commands (seconds).
 _BASH_DEFAULT_TIMEOUT = 30
 _BASH_MAX_TIMEOUT = 120
+
+# Web tool constants.
+_WEB_TIMEOUT_SECONDS = 20
+_WEB_MAX_BYTES = 500_000          # 500KB cap per fetch / search HTML
+_WEB_SEARCH_MAX_RESULTS = 8
+_WEB_FETCH_MAX_CHARS = 30_000     # ~30K chars of markdown to feed LLM
+
+# Common browser User-Agent (DDG blocks generic Python UAs).
+_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+)
 
 #Read_File Tool
 def read_file(path:str) ->str:
@@ -264,7 +293,7 @@ def bash( command:str, timeout: int = _BASH_DEFAULT_TIMEOUT, prompt_fn: Callable
     
     if cls.tier == "warn":
         #We check if it is pre approved or not
-        if always_allow not None and command in always_allow:
+        if always_allow is not None and command in always_allow:
             pass #do nothing
         
         else:
@@ -288,7 +317,335 @@ def bash( command:str, timeout: int = _BASH_DEFAULT_TIMEOUT, prompt_fn: Callable
                 
     return execute_bash(command,timeout)
                 
+def execute_bash(comand:str,timeout:int) ->str:
     
+    #we set timeout to be from 1 to 120
+    timeout = max(1,min(int(timeout),_BASH_MAX_TIMEOUT))
+    
+    #we stroe different shells in an array if one doesnt work we move to another
+    candidates:list[list[str]] = []
+    
+    #append shell environment variable if exists
+    explicit = os.environ.get("SHELL")
+    if explicit:
+        candidates.append([explicit])
+        
+    #if we are running for windows
+    if sys.platform == "win32":
+        #we search for bash.exe with:
+        for name in ("bash.exe", "bash"):
+            found = shutil.which(name)
+            
+            if found:
+                candidates.append([found]) #adds path of bash
+                
+        #check if git bash exists
+        git_bash = Path("C:/Program Files/Git/usr/bin/bash.exe")
+        
+        if git_bash.exists():
+            candidates.append([str(git_bash)])
+            
+        #adding cmd.exe
+        comspec = os.environ.get("COMSPEC","cmd.exe")
+        
+    #for linux
+    else:
+        for name in ("bash", "sh"):
+            found = shutil.which(name)
+            if found:
+                candidates.append([found])
+                
+    #fake shell launch error
+    shim_error_signatures = (
+        "CreateProcessCommon",
+        "execvpe",
+        "wsl.exe --help",
+        "Invalid command line argument",
+        "No such file or directory",
+    )
+
+    last_error = ""
+    
+    #going through different shells and finding comands according to its convention
+    for shell in candidates:
+        is_cmd = shell.lower().endswith("cmd.exe")
+        
+        flag = "/c" if is_cmd else "-c"
+        argv = shell + [flag,comand]
+        
+        try:
+            #now we run the command
+            proc = subprocess.run(
+                argv,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+                cwd=os.getcwd()
+            )
+            out = (proc.stdout or "") + (proc.stderr or "")
+            
+            #we did or "" so that it wont crash
+            
+            #check if any one of the signatures is in output
+            if any(sig in out for sig in shim_error_signatures) and proc.returncode !=0:
+                last_error = out.strip()[:200] #try next shell
+                continue
+            
+            #showing error code with output to see success or error
+            if out:
+                out = out.rstrip() + f"\n[exit {proc.returncode}]"
+            else:
+                out = f"(no output)\n[exit {proc.returncode}]"
+                
+            if len(out) > _READ_CAP_CHARS:
+                out = out[:_READ_CAP_CHARS] + f"\n... [truncated, total {len(out)} chars]"
+            return out
+        
+        except subprocess.TimeoutExpired:
+            return f"[error] Command timed out after {timeout}s"
+        
+        except FileNotFoundError:
+            last_error = f"shell not found: {shell[0]}"
+            
+            continue
+        except Exception as e:
+            last_error = f"{type(e).__name__}: {e}"
+            continue
+
+    return f"[error] No shell could execute the command. Last error: {last_error or 'unknown'}"
+                
+            
+#it finds whole html website
+def web_search(query:str, max_results:int=_WEB_SEARCH_MAX_RESULTS) ->str:
+    """
+        We search in duckduckgo website
+        
+        We dont use any API key, use POST
+        Format:
+        Title
+        URL
+        text
+        
+        User searched web 
+        send request to duckduck go
+        receives html page
+        extrag title url snippet
+        
+        return formatted text
+    """
+        
+    if not query.strip():
+        return "[error] query is empty"
+
+    max_results = max(1, min(int(max_results), 15))  # hard cap at 15
+    
+    try:
+        #converting the querty into URL style
+        data = urllib.parse.urlencode({"q": query}).encode("utf-8")
+        
+        #creating search request
+        req = urllib.request.Request(
+            "https://html.duckduckgo.com/html/",
+            data=data,
+            headers={
+                "User-Agent": _USER_AGENT, #through this we dont get blocked by searching
+                "Accept": "text/html",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+        )
+
+        #sending the request
+        with urllib.request.urlopen(req, timeout=_WEB_TIMEOUT_SECONDS) as resp:
+            raw = resp.read(_WEB_MAX_BYTES) #reads the content only to maximum limit
+            html = raw.decode("utf-8", errors="replace") #converts html to python readable code
+            
+    except urllib.error.URLError as e:
+        return f"[error] Network error: {e.reason}"
+    except TimeoutError:
+        return f"[error] Search timed out after {_WEB_TIMEOUT_SECONDS}s"
+    except Exception as e:
+        return f"[error] {type(e).__name__}: {e}"
+    
+    #<a> in python
+    title_pat = re.compile(
+        r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
+        re.DOTALL,
+    )
+    
+    snippet_pat = re.compile(
+        r'class="result__snippet"[^>]*>(.*?)</a>',
+        re.DOTALL,
+    )
+    
+    titles = title_pat.findall(html)
+    snippets = snippet_pat.findall(html)
+    
+    if not titles:
+        return f"(no results for query: {query!r})"
+    
+    #list where we store nicely formatted output
+    out:list[str] = []
+    
+    for i,(raw_url,title_html) in enumerate(titles[:max_results]):
+        #remove html tags from tag
+        title = re.sub(r"<[^>]+>", "", title_html).strip()
+        
+        #converts URL to python url
+        if "uddg=" in raw_url:
+            m = re.search(r"uddg=([^&]+)", raw_url)
+            if m:
+                raw_url = urllib.parse.unquote(m.group(1))
+
+        snippet_html = snippets[i] if i < len(snippets) else ""
+        snippet = re.sub(r"<[^>]+>", "", snippet_html).strip()
+        snippet = re.sub(r"\s+", " ", snippet)
+        out.append(f"[{i+1}] {title}\n    {raw_url}\n    {snippet}")
+
+    return "\n\n".join(out)
+
+def _should_bypass_jina(url:str) ->bool:
+    """
+    Jina automatically removes ads html css
+    
+    Some Website block jina's User-agent
+    so we fetch directly with a browser-like User-agent 
+    
+    """
+
+    direct_domains = (
+        "raw.githubusercontent.com",   # GitHub raw files (Jina can't render)
+        "gist.githubusercontent.com",
+        "api.github.com",
+        "githubusercontent.com",
+    )
+    return any(d in url for d in direct_domains) #return true if the link maches with the domain which means it will bypass jina
+
+#it fetches one wesbite content
+def fetch_directly(url:str)->str:
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent":_USER_AGENT,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+            }
+        )
+
+        #Send request to website
+        with urllib.request.urlopen(req,timeout=_WEB_TIMEOUT_SECONDS) as resp:
+            #read website
+            raw=resp.read(_WEB_MAX_BYTES)
+            #turn bytes into string
+            text=raw.decode("utf-8",errors="replace")
+            
+    except urllib.error.HTTPError as e:
+        try:
+            body = e.read().decode("utf-8", errors="replace")[:200]
+        except Exception:
+            body = ""
+        return f"[error] HTTP {e.code}: {e.reason} {body}".strip()
+    
+    except urllib.error.URLError as e:
+        return f"[error] Network error: {e.reason}"
+    except TimeoutError:
+        return f"[error] Fetch timed out after {_WEB_TIMEOUT_SECONDS}s"
+    except Exception as e:
+        return f"[error] {type(e).__name__}: {e}"
+    
+    #Raw Text 
+    if(any(url.endswith(ext) for ext in (".md",".txt",".json",".csv",".py"))):
+        if len(text) > _WEB_FETCH_MAX_CHARS:
+            text = text[:_WEB_FETCH_MAX_CHARS] + f"\n\n... [truncated, total {len(text)} chars]"
+        return text
+    
+    #strip html and only return text for LLM
+    text = re.sub(r"<script[^>]*>.*?</script>", " ", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<style[^>]*>.*?</style>", " ", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+
+    if len(text) > _WEB_FETCH_MAX_CHARS:
+        text = text[:_WEB_FETCH_MAX_CHARS] + f"\n\n... [truncated, total {len(text)} chars]"
+    return text
+
+#return clean webpage text
+def web_fetch(url:str) ->str:
+    """
+        Implementation strategy:
+        1. Some sites (GitHub raw, etc.) — fetch directly with browser headers.
+        2. Other sites — route through Jina AI for clean markdown extraction.
+
+    Both paths are free and require no API key.
+    
+    
+    """
+    if not url.strip():
+        return "[error] url is empty"
+    
+    if not url.startswith(("https://","http://")):
+        url = "https://" + url
+        
+    # Direct fetch for sites that Jina can't render / blocks.
+    if _should_bypass_jina(url):
+        return fetch_directly(url)
+    
+    # General path: try Jina, fall back to direct on failure.
+    jina_url = f"https://r.jina.ai/{url}"
+
+
+    import time
+    text: str = ""
+    last_err: str = ""
+    for attempt in range(2):
+        req = urllib.request.Request(
+            jina_url,
+            headers={
+                "User-Agent": _USER_AGENT,
+                "Accept": "text/plain",
+                "X-Return-Format": "markdown",
+                "X-Timeout": str(_WEB_TIMEOUT_SECONDS),
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=_WEB_TIMEOUT_SECONDS) as resp:
+                raw = resp.read(_WEB_MAX_BYTES)
+                text = raw.decode("utf-8", errors="replace")
+                break
+            
+        except urllib.error.HTTPError as e:
+            if e.code in (403, 429, 503) and attempt == 0:
+                last_err = f"HTTP {e.code}"
+                time.sleep(20)
+                continue
+            
+            # Final HTTP error — fall through to direct fetch fallback.
+            return fetch_directly(url)
+            
+        except urllib.error.URLError:
+            return fetch_directly(url)
+        except TimeoutError:
+            return f"[error] Fetch timed out after {_WEB_TIMEOUT_SECONDS}s"
+        except Exception as e:
+            return f"[error] {type(e).__name__}: {e}"
+        
+    else:
+        return f"[error] Jina rate-limited after 2 attempts: {last_err}"
+
+    # Jina prepends "Title: ... Markdown Content:" — strip it.
+    if "Markdown Content:" in text:
+        text = text.split("Markdown Content:", 1)[1].lstrip()
+
+    if len(text) > _WEB_FETCH_MAX_CHARS:
+        text = text[:_WEB_FETCH_MAX_CHARS] + f"\n\n... [truncated, total {len(text)} chars]"
+    return text
+
+    
+    
+    
+
 #Tool Registry
 
 _TOOLS: list[dict] = [

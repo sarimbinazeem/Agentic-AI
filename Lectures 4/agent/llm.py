@@ -12,9 +12,13 @@ so only this file needs to change when switching LLMs.
 
 from __future__ import annotations
 
-from agent import mock_llm
+from agent import real_llm
 from agent.memory import Message
 
-def chat(messages: list[Message],system:str="")->str:
-    return mock_llm.chat(messages,system = system)
+def chat(messages: list[Message],system:str="",plan_mode: bool = False,
+         verifier_mode: bool = False)->str:
+        
+    return real_llm.chat(
+        messages, system=system, plan_mode=plan_mode, verifier_mode=verifier_mode
+    )
 

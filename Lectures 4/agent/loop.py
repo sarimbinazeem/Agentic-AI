@@ -310,14 +310,18 @@ def run(input_fn: Callable[[str],str] = input,  output_fn:Callable[[str],None] =
     #We put default input function into output_fn variable works like print function that TAKES STR and RETURNS NOTHING
     
     #Initilazing History with system prompt
-    history =  mem.init_history(build_system_prompt)
+    history =  mem.init_history(build_system_prompt())
     
     always_allow: set[str] = set()
+    
+    plan_mode: bool = False
+    
+    verifier_mode: bool = False
     
     _emit(output_fn, "╔════════════════════════════════════════════╗")
     _emit(output_fn, "║   Demo Harness — Checkpoint 2              ║")
     _emit(output_fn, "║   Mock LLM + Tools (ReAct loop)            ║")
-    _emit(output_fn, "║   Tools: " + ", ".join(tool_registry.list_names()) + "  ║")
+    _emit(output_fn, "║   Tools: " + ", ".join(tool_registry.get_names()) + "  ║")
     _emit(output_fn, "║   Type 'quit' or 'exit' to leave.          ║")
     _emit(output_fn, "╚════════════════════════════════════════════╝")
     _emit(output_fn, "")
@@ -475,17 +479,3 @@ def run(input_fn: Callable[[str],str] = input,  output_fn:Callable[[str],None] =
             else:
                 _emit(output_fn, "  ⚠ Verifier retries exhausted.\n")
                 
-                    
-        #LLM thinks
-        try:
-            reply=llm.chat(history)
-        except Exception as e:
-            output_fn(f"[Agent error] {e}")
-            continue
-        
-        #Save assitant reply
-        mem.add_assistant(history,reply)
-        
-        #Printing
-        output_fn(f"Agent: {reply}")
-        sys.stdout.flush()

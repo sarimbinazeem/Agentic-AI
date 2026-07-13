@@ -191,7 +191,7 @@ def build_system_prompt(plan_mode:bool=False , verifier_mode:bool=False) ->str:
      #extracting tools info through schema
     tool_lines=[]
 
-    for schema in tools.schemas():
+    for schema in tools.get_schema():
         name = schema["name"]
         desc = schema["description"]
         params = schema["parameters"]
@@ -237,12 +237,32 @@ def chat(messages:list[Message], system: str = "",
     chat_messages = [system_message] + messages
 
 
-    
+    schemas = tools.get_schema()
+
+
+    import json
+
     response = client.chat.completions.create(
         model=os.getenv("MODEL"),
         messages=chat_messages,
-        tools=None if (plan_mode or verifier_mode) else tools.schemas(),
-        response_format={"type":"json_object"},
+        tools=None if (plan_mode or verifier_mode) else tools.get_schema(),
+        response_format={"type": "json_object"} if (plan_mode or verifier_mode) else None,
     )
-    
-    return response.choices[0].message.content
+
+    message = response.choices[0].message
+
+    # ---------- TOOL CALL ----------
+    if message.tool_calls:
+        call = message.tool_calls[0]
+
+        return json.dumps({
+            "action": "tool_call",
+            "tool": call.function.name,
+            "args": json.loads(call.function.arguments or "{}")
+        })
+
+    # ---------- FINAL ANSWER ----------
+    return json.dumps({
+        "action": "final",
+        "answer": message.content or ""
+    })

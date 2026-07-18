@@ -5,7 +5,8 @@ there are two ways
 raw http request positng or
 direct SDK way that automatically sends rqeust to api in less line of codes
 
-it calles messages -> parts
+it calles messages - contents -> parts
+
 
 """
 
@@ -16,7 +17,7 @@ from dotenv import load_dotenv
 from google import genai
 
 load_dotenv()
-API_KEY = os.getenv("")
+API_KEY = os.getenv("GEMINI_API_KEY")
 MODEL = "gemini-2.5-flash"
 QUESTION = "What is Gemini famous for? Answer in one sentence."
 

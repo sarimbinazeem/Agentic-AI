@@ -1,5 +1,5 @@
 """
-Echo Graph
+Reply Graph
 1) Define State
 2) Write a node function (Takes state and return state)
 3) Write in stategraph
@@ -9,22 +9,31 @@ Echo Graph
 
 from langgraph.graph import END,START,StateGraph
 from app.state import State
+from app.llm import chat
 
-def echo(state:State) -> dict:
+SYSTEM_PROMPT = (
+    "You are a helpful WhatsApp assistant. "
+    "Reply concisely (1–3 sentences). "
+    "Mirror the user's language. "
+    "If the user writes in English, reply in English. "
+    "If they write in Urdu/Hindi, reply in the same script."
+)
+
+
+
+def generate(state:State) -> dict:
     """
-    Takes state and uppercases it sends back
-
-    it changes the state and gives
-    
+    Takes message and replies with LLM
     """
 
-    return {"reply":state["message"].upper()}
+    text = chat(SYSTEM_PROMPT,state["message"])
+    return {"reply": text}
 
 #Building the graph Start to edge (echo) then edge to end
 
 _builder = StateGraph(State)
-_builder.add_node("echo",echo)
-_builder.add_edge(START,"echo")
-_builder.add_edge("echo",END)
+_builder.add_node("generate", generate)
+_builder.add_edge(START, "generate")
+_builder.add_edge("generate", END)
 
 graph = _builder.compile()

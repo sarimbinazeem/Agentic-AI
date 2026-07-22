@@ -22,7 +22,7 @@ from fastapi import FastAPI, HTTPException, Request #classes
 
 import httpx
 
-from app.graph import graph
+from app.graph import build_graph
 from app.openwa_client import OpenWAClient
 
 # Load .env from the repo root when running natively (uvicorn app.main:app).
@@ -63,6 +63,11 @@ async def lifespan(app: FastAPI):
         log.info("Webhook HMAC verification: ON")
     else:
         log.warning("Webhook HMAC verification: OFF (no OPENWA_WEBHOOK_SECRET)")
+
+    #we build the graph in this lifespan so that AsyncSqliteSaver runs on the same event loop as ainvoke()
+    app.state.graph = await build_graph()
+    log.info("LangGraph compiled (async checkpointer ready)")
+
     yield
     await _client.aclose() #to close
 
@@ -75,6 +80,17 @@ app = FastAPI(title="whatsapp-bot-langgraph", lifespan=lifespan)
 async def health() -> dict[str, str]:
     """Cheap endpoint so we can curl from inside the compose network."""
     return {"status": "ok"}
+
+#temporary function for debugging
+@app.post("/debug-webhook")
+async def debug_webhook(request: Request) -> dict[str, str]:
+    """Temporary endpoint to see what headers OpenWA is sending."""
+    headers = dict(request.headers)
+    body = await request.body()
+    log.info("DEBUG WEBHOOK - Headers: %s", headers)
+    log.info("DEBUG WEBHOOK - Body: %s", body[:500])  # First 500 chars
+    return {"status": "debug", "headers": str(headers)}
+
 
 #it checks if WA Sends it *(is it trusted or not)
 def _verify_signature(raw_body: bytes, signature_header: str | None) -> bool:
@@ -115,8 +131,17 @@ async def webhook(request: Request) -> dict[str, str]:
         # when we *do* have a secret configured.
         raise HTTPException(status_code=401, detail="bad signature")
 
-    #converts it into dictionary
-    event: dict[str, Any] = await request.json()
+    try:
+            
+        #converts it into dictionary
+        event: dict[str, Any] = await request.json()
+
+    except Exception:
+        # Probe / malformed body — return 200 so OpenWA doesn't retry,
+        # but log loudly so we can see what came through.
+        log.warning("non-JSON body on /webhook: %r", raw[:200])
+        return {"status": "ignored-not-json"}
+    
 
     #ignroe connection or irreleavnt message
     if event.get("event") != "message.received":
@@ -149,6 +174,7 @@ async def webhook(request: Request) -> dict[str, str]:
     #we choose through / routing 
     #Anything else goes through FREELLMAPI
     provider = "free"
+    persona: str | None = None
     lower = body.lower().lstrip()
     for prefix, name in (("/claude", "claude"), ("/gpt", "gpt")):
         if lower.startswith(prefix):
@@ -157,31 +183,60 @@ async def webhook(request: Request) -> dict[str, str]:
             log.info("routing to provider=%s", name)
             break
 
-    # Run the graph. State comes back with `reply` populated.
-    result = await graph.ainvoke({"message": body, "reply": ""})
-    reply = (result.get("reply") or "").strip()
-    if not reply:
-        return {"status": "no-reply"}
+    # Then parse persona prefix (only one).
+    for prefix, name in (("/resume", "resume"), ("/services", "services"), ("/personal", "personal")):
+        if lower.startswith(prefix):
+            persona = name
+            lower = lower[len(prefix):].lstrip()
+            log.info("routing to persona=%s", name)
+            break
+        
+    # Whatever's left of text is what the LLM sees.
+        body = lower.strip()
+        if not body:
+            # Slash command without any actual message.
+            log.warning("empty body after slash parse (chat=%s)", chat_id)
+            return {"status": "empty-after-slash"}
+
+        # ACK fast — OpenWA's webhook timeout is ~10s, and an LLM call can
+        # take 2–5s. If we block here, we'd risk hitting the timeout under
+        # load and OpenWA would retry, doubling our work. Instead, hand off
+        # to a background task and return immediately.
+        initial_state = {"message": body, "reply": "", "provider": provider}
+        if persona:
+            initial_state["persona"] = persona
 
     #Open WA webhook takes alot of time that can cause timeout issues
     #we hand off it to a backgroudn task and let it run  and return immediately
-    asyncio.create_task(_handle(chat_id, body, provider))
+    asyncio.create_task(_handle(request.app,chat_id, body, provider))
     return {"status": "queued"}
 
-async def _handle(chat_id: str, body: str, provider: str = "free") -> None:
+async def _handle(app, chat_id: str, initial_state: dict) -> None:
     """
     Background task: run the graph
     log the errors only dont raise it
     we do log only for debugging
     """
     try:
-        result = await graph.ainvoke({"message": body, "reply": "","provider": provider})
+        """
+        thread id is the one thing that keeps ocnversational history itnact
+        checkpointer uses it to load previous information and save this session's hsitoy aswell
+        so that next message sees the full history
+        
+        """
+        config = {"configurable": {"thread_id": chat_id}}
+        result = await app.state.graph.ainvoke(initial_state, config=config)
         reply = (result.get("reply") or "").strip()
         if not reply:
-            log.warning("graph returned empty reply for chat=%s body=%r", chat_id, body[:80])
+            log.warning("graph returned empty reply for chat=%s", chat_id)
             return
 
-        log.info("chat=%s in=%r out=%r", chat_id, body, reply)
+        log.info("chat=%s in=%r out=%r persona=%s provider=%s",
+                 chat_id,
+                 initial_state.get("message"),
+                 reply,
+                 result.get("persona", "?"),
+                 initial_state.get("provider", "?"))
         try:
             await _client.send_text(chat_id=chat_id, text=reply)
         except httpx.HTTPStatusError as exc:
@@ -196,5 +251,6 @@ async def _handle(chat_id: str, body: str, provider: str = "free") -> None:
             )
         except httpx.HTTPError:
             log.exception("OpenWA send-text transport error for chat_id=%s", chat_id)
+
     except Exception:
         log.exception("Background handler crashed for chat_id=%s", chat_id)

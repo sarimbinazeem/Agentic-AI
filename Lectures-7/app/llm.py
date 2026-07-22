@@ -25,12 +25,15 @@ def _get_client() -> OpenAI:
     return OpenAI(base_url=base_url, api_key=api_key)
 
 
-def chat(system: str, user: str) -> str:
-    """Single-turn chat. Returns the model's reply text."""
+def chat(system: str, user: str,model : str | None = None) -> str:
+    """Single-turn chat. Returns the model's reply text.
+    
+    if we provide model then it goes with it otherwise it routes and pick one
+    """
 
-    model = os.environ.get("OPENAI_MODEL", "auto")
+    chosen = model or os.environ.get("OPENAI_MODEL", "auto")
     resp = _get_client().chat.completions.create(
-        model=model,
+        model=chosen,
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": user},
